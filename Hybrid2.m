@@ -47,7 +47,7 @@ DiscountFactorVal = 0.99;
 
 % RL Agent
 
-mdl = 'DCDC_BBC_hybrid1';
+mdl = 'DCDC_BBC_hybrid';
 open_system(mdl)
 agentblk = [mdl '/RL Agent'];
 
