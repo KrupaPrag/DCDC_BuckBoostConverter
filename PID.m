@@ -19,10 +19,11 @@ V_ref = 30; %30,80,110
 %%
 % PI controller values 
 gain_K = 100;
-integral_I= 40000;
-periodVal = 1/10000;
+integral_I= 350000;
+periodVal = 0.00001;
 pw_percent = 50;
+
 %%
-Simulation_Time = 10;
+Simulation_Time = 3;
 sim('DCDC_BBC_PID',Simulation_Time);
 

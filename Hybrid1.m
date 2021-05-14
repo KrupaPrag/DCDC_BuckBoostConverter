@@ -3,86 +3,87 @@ clc;
 %%
 % GLOBAL PARAMETERS 
 % Parameter values
-num_episodes = 15;
+num_episodes = 1024;
+numValidationExperiments = 20;
+
 %%
-% CONSTANT
-V_source_value = 48; % input voltage
+% Buck Boost Converter Parameters
+V_source_value = 48;
 L_inductance = 10e-6; 
 C_capacitance = 40e-3;
 R_load = 100;
 %%
-% Sugnal Processing parameters
+gain_k = 100;
+integral_I = 350000;
+period_val = 0.00001;
+pw_percent = 50;
+
+%%
+% Signal Processing Parameters
 prev_time = 0;
 init_action = 1; 
-stopping_criterion = 500;
-error_threshold = 0.01;
+stopping_criterion = 1000;
+threshold1= 0.4;
+threshold2 =1;
+error_threshold = 0.02;
 %%
 Ts = 0.00001;
-Tf = 10;
-V_ref = 30; %30,80,110
+Tf = 0.3;
+V_ref =110;%30;%80%110;
+
 %%
-% PI controller values 
-gain_K = 100;
-integral_I= 40000;
-periodVal = 1/10000;
-pw_percent = 50;
-%%
-% Parameters
+% RL Parameters
 miniBatch_percent = 0.8;
-learnRateActor = 0.008;
-learnRateCritic= 0.008;
-criticLayerSizes= [128 128];
-actorLayerSizes= [128 128];
-discountFactor= 0.99;
-num_epochs= 100;
+learnRateActor = 0.05;
+learnRateCritic= 0.05;
+criticLayerSizes= [256 256];
+actorLayerSizes= [256 256];
+discountFactor= 0.995;
 
 max_steps = ceil(Tf/Ts);
-ExperienceHorisonLength = 75;
+ExperienceHorisonLength = 10;
 ClipFactorVal = 0.2;
-EntropyLossWeightVal = 0.02;
-MiniBatchSizeVal = ceil(ExperienceHorisonLength*miniBatch_percent); % <=expectationHorisonVal
+EntropyLossWeightVal = 0.05;
+MiniBatchSizeVal = ceil(ExperienceHorisonLength*miniBatch_percent); 
 NumEpochsVal = 5; 
 DiscountFactorVal = 0.99;
 
-
-
-
 %%
 
-neg_Vref = -V_ref;
+% RL Agent
 
-% mdl = 'DCDC_BBC_RL';
 mdl = 'DCDC_BBC_hybrid1';
 open_system(mdl)
 agentblk = [mdl '/RL Agent'];
 
-
-numObs = 3; % Action State - change the lowwer and upper limit [v0, e, de/dt, prev_ime, prev_error]
-% Observation = [State_t action_{t-1}]^T (current state  and last applied action)
+numObs = 3; % [v0, e, de/dt]
 observationInfo = rlNumericSpec([numObs,1],...
-    'LowerLimit',[-inf -inf -inf]',...
-    'UpperLimit',[0 V_ref inf]');
+    'LowerLimit',[-inf -inf 0]',...
+    'UpperLimit',[0.1 V_ref inf]');
 observationInfo.Name = 'observations';
 observationInfo.Description = 'integrated error, error, and measured height';
 numObservations = observationInfo.Dimension(1);
 
-
-a = [0;1]; %The actions that can be applied are binary. 
+a = [0;1]; 
 actionInfo = rlFiniteSetSpec(a);
 
 env = rlSimulinkEnv(mdl,agentblk,observationInfo,actionInfo);
 
-%                                         env.ResetFcn = @(in)localResetFcn(in); %See examples 
 env.ResetFcn = @(in) setVariable(in,'init_action',1);
 num_inputs = numObs;        
 
-criticNetwork = [
-    imageInputLayer([num_inputs 1 1],'Normalization','none','Name','state')
-    fullyConnectedLayer(criticLayerSizes(1),'Name','CriticFC1')
+criticNetwork = [imageInputLayer([num_inputs 1 1],'Normalization','none','Name','state')
+    fullyConnectedLayer(criticLayerSizes(1),'Name','CriticFC1',...
+    'Weights',sqrt(2/numObs)*(rand(criticLayerSizes(1),numObs)-0.5), ...
+    'Bias',1e-3*ones(criticLayerSizes(1),1))
     reluLayer('Name','CriticRelu1')
-    fullyConnectedLayer(criticLayerSizes(2),'Name','CriticFC2')
+    fullyConnectedLayer(criticLayerSizes(2),'Name','CriticFC2',...
+    'Weights',sqrt(2/criticLayerSizes(1))*(rand(criticLayerSizes(2),criticLayerSizes(1))-0.5), ...
+    'Bias',1e-3*ones(criticLayerSizes(2),1))
     reluLayer('Name','CriticRelu2')
-    fullyConnectedLayer(1,'Name','CriticOutput')];
+    fullyConnectedLayer(1,'Name','CriticOutput',...
+    'Weights',sqrt(2/criticLayerSizes(2))*(rand(1,criticLayerSizes(2))-0.5), ...
+    'Bias',1e-3)];
 
 criticOpts = rlRepresentationOptions('LearnRate',learnRateCritic,'GradientThreshold',1);
 
@@ -91,12 +92,18 @@ critic = rlValueRepresentation(criticNetwork,observationInfo,'Observation',{'sta
 
 numAct = numel(actionInfo.Elements);
 actorNetwork = [imageInputLayer([numObs 1 1],'Normalization','none','Name','observation')
-    fullyConnectedLayer(actorLayerSizes(1),'Name','ActorFC1')
+    fullyConnectedLayer(actorLayerSizes(1),'Name','ActorFC1',...
+    'Weights',sqrt(2/numObs)*(rand(actorLayerSizes(1),numObs)-0.5), ...
+            'Bias',1e-3*ones(actorLayerSizes(1),1))
     reluLayer('Name','ActorRelu1')
-    fullyConnectedLayer(actorLayerSizes(2),'Name','ActorFC2')
+    fullyConnectedLayer(actorLayerSizes(2),'Name','ActorFC2',...
+    'Weights',sqrt(2/actorLayerSizes(1))*(rand(actorLayerSizes(2),actorLayerSizes(1))-0.5), ...
+    'Bias',1e-3*ones(actorLayerSizes(2),1))
     reluLayer('Name','ActorRelu2')
-    fullyConnectedLayer(numAct,'Name','Action')
-    reluLayer('Name','actionProbability')
+    fullyConnectedLayer(numAct,'Name','Action',...
+    'Weights',sqrt(2/actorLayerSizes(2))*(rand(numAct,actorLayerSizes(2))-0.5), ...
+            'Bias',1e-3*ones(numAct,1))
+    softmaxLayer('Name','actionProbability')
     ];  
 
 actorOpts = rlRepresentationOptions('LearnRate',learnRateActor,'GradientThreshold',1);
@@ -114,6 +121,8 @@ agentOpts = rlPPOAgentOptions('ExperienceHorizon',ExperienceHorisonLength,...
                         'GAEFactor',0.98,...                        
                         'SampleTime',Ts,...
                         'DiscountFactor',DiscountFactorVal);
+%%
+                    
 agent = rlPPOAgent(actor,critic,agentOpts);
 
 trainOpts = rlTrainingOptions(...
@@ -123,9 +132,12 @@ trainOpts = rlTrainingOptions(...
     'Plots','training-progress',...
     'StopTrainingCriteria','AverageReward',...
     'StopTrainingValue',inf,...
-    'ScoreAveragingWindowLength',100,...
+    'ScoreAveragingWindowLength',50,...
     'SaveAgentCriteria',"EpisodeReward",...
-    'SaveAgentValue',10000);% Save agent with value greater than 
+    'SaveAgentValue',50000);
+
+%%
+
+% Train Agent
 
 trainingStats = train(agent,env,trainOpts);
-
